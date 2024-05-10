@@ -26,59 +26,6 @@ type createModel struct {
 	height          int
 }
 
-func NewCreateModel() createModel {
-	// Spinner
-	sp := spinner.New()
-	sp.Spinner = spinner.Points
-	// Password Input
-	passwordInput := textinput.New()
-	passwordInput.CharLimit = 16
-	passwordInput.Placeholder = "Password"
-	passwordInput.EchoMode = textinput.EchoPassword
-	passwordInput.EchoCharacter = '•'
-
-	// Username
-	usernameInput := textinput.New()
-	usernameInput.Placeholder = "Username"
-	usernameInput.Focus()
-	usernameInput.Validate = func(s string) error {
-		if s == "" {
-			return errors.New("Username cannot be empty")
-		}
-		return nil
-	}
-
-	model := createModel{
-		inputs: []textinput.Model{
-			usernameInput,
-			passwordInput,
-		},
-		spinner: sp,
-	}
-
-	return model
-}
-
-func (m *createModel) setCredentials(c map[string]string) {
-	m.credentials = c
-}
-
-func signUp(credential map[string]string) tea.Cmd {
-	return func() tea.Msg {
-		c := &http.Client{
-			Timeout: 10 * time.Second,
-		}
-		res, err := c.Get("https://wikipedia.com")
-		if err != nil {
-			log.Println(err)
-			return errMsg{err}
-		}
-		defer res.Body.Close()
-		log.Println(res.Status, credential["password"], credential["username"])
-		return statusMsg{sType: STATUS_CREATE}
-	}
-}
-
 func (m createModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.WindowSizeMsg:
@@ -149,7 +96,7 @@ func (m createModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 							m.isCreating = true
 							m.inputs[m.focusedIdx].Blur() // Blur current active input
 							m.setCredentials(cred)
-							return m, tea.Batch(m.spinner.Tick, m.updateInputs(msg), signUp(cred))
+							return m, tea.Batch(m.spinner.Tick, m.updateInputs(msg), create(cred))
 						}
 						m.focusedIdx = 0
 					} else {
@@ -166,13 +113,11 @@ func (m createModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				}
 				return m, tea.Batch(cmds...)
 			} else if m.isLoggedIn {
-				// TODO: Implement push to different screen on logged in
-				return m, tea.Quit
+				return enterChat(m.width, m.height)
 			}
 		default:
 			if m.isLoggedIn && m.isCreated {
-				// TODO: Implement push to different screen on logged in
-				return m, tea.Quit
+				return enterChat(m.width, m.height)
 			}
 		}
 	}
@@ -191,17 +136,6 @@ func (m *createModel) updateInputs(msg tea.Msg) tea.Cmd {
 	return tea.Batch(cmds...)
 }
 
-// Sets the default parameter for eachinput placeholder
-func (m *createModel) setInputsDefaultPlaceholders() {
-	for i := range m.inputs {
-		switch {
-		case strings.Contains(m.inputs[i].Placeholder, "Password"):
-			m.inputs[i].Placeholder = "Password"
-		case strings.Contains(m.inputs[i].Placeholder, "Username"):
-			m.inputs[i].Placeholder = "Username"
-		}
-	}
-}
 func (m createModel) View() string {
 	var b strings.Builder
 	for i := range m.inputs {
@@ -230,6 +164,72 @@ func (m createModel) View() string {
 	}
 	return b.String()
 }
+
 func (m createModel) Init() tea.Cmd {
 	return nil
+}
+
+func (m *createModel) setCredentials(c map[string]string) {
+	m.credentials = c
+}
+
+// Sets the default parameter for eachinput placeholder
+func (m *createModel) setInputsDefaultPlaceholders() {
+	for i := range m.inputs {
+		switch {
+		case strings.Contains(m.inputs[i].Placeholder, "Password"):
+			m.inputs[i].Placeholder = "Password"
+		case strings.Contains(m.inputs[i].Placeholder, "Username"):
+			m.inputs[i].Placeholder = "Username"
+		}
+	}
+}
+
+func NewCreateModel() createModel {
+	// Spinner
+	sp := spinner.New()
+	sp.Spinner = spinner.Points
+	// Password Input
+	passwordInput := textinput.New()
+	passwordInput.CharLimit = 16
+	passwordInput.Placeholder = "Password"
+	passwordInput.EchoMode = textinput.EchoPassword
+	passwordInput.EchoCharacter = '•'
+
+	// Username
+	usernameInput := textinput.New()
+	usernameInput.Placeholder = "Username"
+	usernameInput.Focus()
+	usernameInput.Validate = func(s string) error {
+		if s == "" {
+			return errors.New("Username cannot be empty")
+		}
+		return nil
+	}
+
+	model := createModel{
+		inputs: []textinput.Model{
+			usernameInput,
+			passwordInput,
+		},
+		spinner: sp,
+	}
+
+	return model
+}
+
+func create(credential map[string]string) tea.Cmd {
+	return func() tea.Msg {
+		c := &http.Client{
+			Timeout: 10 * time.Second,
+		}
+		res, err := c.Get("https://wikipedia.com")
+		if err != nil {
+			log.Println(err)
+			return errMsg{err}
+		}
+		defer res.Body.Close()
+		log.Println(res.Status, credential["password"], credential["username"])
+		return statusMsg{sType: STATUS_CREATE}
+	}
 }

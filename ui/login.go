@@ -12,22 +12,6 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 )
 
-func login(credential map[string]string) tea.Cmd {
-	return func() tea.Msg {
-		c := &http.Client{
-			Timeout: 10 * time.Second,
-		}
-		res, err := c.Get("https://google.com")
-		if err != nil {
-			log.Println(err)
-			return errMsg{err}
-		}
-		defer res.Body.Close()
-		log.Println(res.Status, credential["password"], credential["username"])
-		return statusMsg{sType: STATUS_LOGIN}
-	}
-}
-
 type loginModel struct {
 	username        string
 	storedPass      string
@@ -40,36 +24,14 @@ type loginModel struct {
 	validationError bool
 }
 
-func NewLoginModel(username, storedPass string) loginModel {
-	// Spinner
-	sp := spinner.New()
-	sp.Spinner = spinner.Points
-	// Password Input
-	passwordInput := textinput.New()
-	passwordInput.CharLimit = 16
-	passwordInput.Placeholder = "Password"
-	passwordInput.EchoMode = textinput.EchoPassword
-	passwordInput.EchoCharacter = '•'
-
-	if storedPass == "" {
-		passwordInput.Focus()
-	}
-
-	model := loginModel{
-		username:   username,
-		password:   passwordInput,
-		spinner:    sp,
-		storedPass: storedPass,
-	}
-
-	return model
-}
-
 func (m loginModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	var cmd tea.Cmd
 	switch msg := msg.(type) {
 	case tea.WindowSizeMsg:
 		m.width, m.height = msg.Width, msg.Height
+	case errMsg:
+		fmt.Println(errorTextStyle.Render(fmt.Sprintf("ERROR: %s", msg.Error())))
+		return m, tea.Quit
 	case statusMsg:
 		var cmd tea.Cmd
 		switch msg.sType {
@@ -112,7 +74,6 @@ func (m loginModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.password.Blur() // Blur current active input
 				return m, tea.Batch(m.spinner.Tick, cmd, login(map[string]string{"password": password, "username": m.username}))
 			} else if m.isLoggedIn {
-				log.Println(m.height, m.width)
 				return enterChat(m.width, m.height)
 			}
 		default:
@@ -148,7 +109,7 @@ func (m loginModel) View() string {
 				b.WriteRune('\n')
 				b.WriteRune('\n')
 			}
-			b.WriteString(fmt.Sprintf("Logged in %c\n\n", ICON_DONE))
+			b.WriteString(successTextStyle.Render(fmt.Sprintf("Logged in %c\n\n", ICON_DONE)))
 			b.WriteString("press any key to proceed\n")
 		}
 	}
@@ -157,4 +118,43 @@ func (m loginModel) View() string {
 
 func (m loginModel) Init() tea.Cmd {
 	return nil
+}
+func NewLoginModel(username, storedPass string) loginModel {
+	// Spinner
+	sp := spinner.New()
+	sp.Spinner = spinner.Points
+	// Password Input
+	passwordInput := textinput.New()
+	passwordInput.CharLimit = 16
+	passwordInput.Placeholder = "Password"
+	passwordInput.EchoMode = textinput.EchoPassword
+	passwordInput.EchoCharacter = '•'
+
+	if storedPass == "" {
+		passwordInput.Focus()
+	}
+
+	model := loginModel{
+		username:   username,
+		password:   passwordInput,
+		spinner:    sp,
+		storedPass: storedPass,
+	}
+
+	return model
+}
+
+func login(credential map[string]string) tea.Cmd {
+	return func() tea.Msg {
+		c := &http.Client{
+			Timeout: 10 * time.Second,
+		}
+		res, err := c.Get("https://google.com")
+		if err != nil {
+			return errMsg{err}
+		}
+		defer res.Body.Close()
+		log.Println(res.Status, credential["password"], credential["username"])
+		return statusMsg{sType: STATUS_LOGIN}
+	}
 }

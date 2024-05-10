@@ -20,11 +20,11 @@ import (
 
 const (
 	CHATS_PANEL int = iota
-	MESSAGE_PANEL
-	MESSSAGE_VIEW_PANEL
 	ACTIVE_REQUEST_PANEL
 	SEND_REQUEST_PANNEL
 	JOIN_ROOM_PANEL
+	MESSAGE_PANEL
+	MESSSAGE_VIEW_PANEL
 	MAX_PANEL_NO
 )
 
@@ -54,7 +54,10 @@ func (k keyMap) FullHelp() [][]key.Binding {
 }
 
 type chatModel struct {
-	loaded             bool
+	chatsLoading       bool
+	requestsLoading    bool
+	chatsLoaded        bool
+	requestsLoaded     bool
 	viewport           viewport.Model
 	input              textarea.Model
 	help               help.Model
@@ -80,154 +83,6 @@ type chatModel struct {
 	joinGroupLoading   bool
 }
 
-func enterChat(w, h int) (chatModel, tea.Cmd) {
-	altScrCmd := tea.EnterAltScreen
-	return NewChatModel(w, h), altScrCmd
-}
-
-func NewChatModel(w, h int) chatModel {
-	var keys = keyMap{
-		Up: key.NewBinding(
-			key.WithKeys("up"),
-			key.WithHelp("↑", "move up  "),
-		),
-		Down: key.NewBinding(
-			key.WithKeys("down"),
-			key.WithHelp("↓", "move down  "),
-		),
-		Tab: key.NewBinding(
-			key.WithKeys("󰌥/󰌒"),
-			key.WithHelp("󰌥/󰌒", "cycle panels  "),
-		),
-		Help: key.NewBinding(
-			key.WithKeys("?"),
-			key.WithHelp("?", "toggle help  "),
-		),
-		Quit: key.NewBinding(
-			key.WithKeys("ctrl+c"),
-			key.WithHelp("ctrl+c", "quit  "),
-		),
-		Enter: key.NewBinding(
-			key.WithKeys("󰌑"),
-			key.WithHelp("󰌑", "enter room/send message  "),
-		),
-		Accept: key.NewBinding(
-			key.WithKeys("ctrl+a"),
-			key.WithHelp("ctrl+a", "accept request  "),
-		),
-		Reject: key.NewBinding(
-			key.WithKeys("ctrl+x"),
-			key.WithHelp("ctrl+x", "reject request  "),
-		),
-		SwitchPanel: key.NewBinding(
-			key.WithKeys("alt+[n]"),
-			key.WithHelp("alt+[n]", "switch panel (1|chats 2|input 3|View 4|requests 5|send request 6|join room)  "),
-		),
-	}
-
-	sp := spinner.New()
-	sp.Spinner = spinner.Dot
-
-	joinNameInput := textinput.New()
-	joinNameInput.Placeholder = "Chatroom Name"
-	joinNameInput.Blur()
-	joinNameInput.Width = 28
-
-	joinPasskeyInput := textinput.New()
-	joinPasskeyInput.Placeholder = "Chatroom Passkey"
-	joinNameInput.Blur()
-	joinPasskeyInput.Width = 28
-
-	sendRequestInput := textinput.New()
-	sendRequestInput.Placeholder = "Username"
-	sendRequestInput.Blur()
-	sendRequestInput.Width = 28
-
-	sndReqPanelHeight := 5
-	joinRoomPanelHeight := 6
-
-	hp := help.New()
-	hp.Styles = helpStyle
-	hpHeight := strings.Count(hp.View(keys), "\n")
-
-	lt := list.New([]list.Item{
-		chatItem{name: "User I", lastMessage: "Hello"},
-		chatItem{name: "Group I", lastMessage: "Jide: A long ass text to see the width of the list"},
-	}, list.NewDefaultDelegate(), 0, h-hpHeight-joinRoomPanelHeight-sndReqPanelHeight-4)
-	lt.InfiniteScrolling = true
-	lt.Title = "Chat List"
-	lt.SetShowPagination(false)
-	lt.SetShowStatusBar(false)
-	lt.SetShowHelp(false)
-	lt.SetFilteringEnabled(false)
-	lt.SetWidth(31)
-	lt.KeyMap = list.KeyMap{}
-	lt.SetSpinner(spinner.Jump)
-
-	reqLt := list.New([]list.Item{
-		requestItem{name: "Ayobami", sentAt: time.Now()},
-	}, list.NewDefaultDelegate(), 20, h-4-hpHeight)
-	reqLt.InfiniteScrolling = true
-	reqLt.Title = "Requests"
-	reqLt.SetShowPagination(false)
-	reqLt.SetShowStatusBar(false)
-	reqLt.SetShowHelp(false)
-	reqLt.SetFilteringEnabled(false)
-	reqLt.SetWidth(25)
-	reqLt.KeyMap = list.KeyMap{}
-	reqLt.SetSpinner(spinner.Jump)
-
-	ta := textarea.New()
-	ta.Placeholder = "Send a message..."
-	ta.Focus()
-	ta.Reset()
-	ta.Prompt = "┃ "
-	ta.SetHeight(1)
-	ta.FocusedStyle.CursorLine = lipgloss.NewStyle()
-	ta.Blur()
-	ta.ShowLineNumbers = false
-	ta.KeyMap.InsertNewline.SetEnabled(false)
-	ta.SetWidth(w - lipgloss.Width(lt.View()) - lipgloss.Width(reqLt.View()) - 6)
-
-	vp := viewport.New(w-lipgloss.Width(lt.View())-lipgloss.Width(reqLt.View())-6, h-7-hpHeight)
-
-	return chatModel{
-		input:             ta,
-		viewport:          vp,
-		messages:          []string{},
-		err:               nil,
-		width:             w,
-		height:            h,
-		chatList:          lt,
-		keys:              keys,
-		requestsList:      reqLt,
-		helpHeight:        hpHeight,
-		loadingMsg:        true,
-		nameChatInput:     joinNameInput,
-		passkeyChatInput:  joinPasskeyInput,
-		addUserInput:      sendRequestInput,
-		sndRequestHeight:  sndReqPanelHeight,
-		joinRoomHeight:    joinRoomPanelHeight,
-		progressIndicator: sp,
-	}
-}
-
-func loadMessages(chat, username string) tea.Cmd {
-	return func() tea.Msg {
-		c := &http.Client{
-			Timeout: 10 * time.Second,
-		}
-		res, err := c.Get("https://google.com")
-		if err != nil {
-			log.Println(err)
-			return errMsg{err}
-		}
-		defer res.Body.Close()
-		log.Println(chat, username)
-		return statusMsg{sType: STATUS_MESSAGE_LOAD}
-	}
-}
-
 func (m chatModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	var (
 		vCmd        tea.Cmd
@@ -235,10 +90,20 @@ func (m chatModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		lCmd        tea.Cmd
 		hCmd        tea.Cmd
 		sCmd        tea.Cmd
+		rCmd        tea.Cmd
 		sndReqCmd   tea.Cmd
 		joinNameCmd tea.Cmd
 		joinPassCmd tea.Cmd
 	)
+
+	if !m.chatsLoading && !m.chatsLoaded {
+		m.chatsLoading = true
+		return m, tea.Batch(m.chatList.StartSpinner(), getChats())
+	}
+	if !m.requestsLoading && !m.requestsLoaded {
+		m.requestsLoading = true
+		return m, tea.Batch(m.requestsList.StartSpinner(), getRequests())
+	}
 
 	switch m.focusedPanel {
 	case MESSAGE_PANEL:
@@ -281,19 +146,20 @@ func (m chatModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.width, m.height = msg.Width, msg.Height
 
 		m.help.Width = m.width
-		m.input.SetWidth(m.width - lipgloss.Width(m.chatList.View()) - lipgloss.Width(m.requestsList.View()) - 6)
-		m.viewport.Width = m.width - lipgloss.Width(m.chatList.View()) - lipgloss.Width(m.requestsList.View()) - 6
+		m.input.SetWidth(m.width - m.chatList.Width() - 4) // 4 is to account for the borders
+		m.viewport.Width = m.width - lipgloss.Width(m.chatList.View()) - 4
 
-		m.chatList.SetHeight(m.height - m.helpHeight - m.joinRoomHeight - m.sndRequestHeight - 4)
-		m.requestsList.SetHeight(m.height - m.helpHeight - 4)
+		m.chatList.SetHeight(m.height - m.helpHeight - m.joinRoomHeight - m.sndRequestHeight - m.requestsList.Height() - 6)
 		m.viewport.Height = m.height - lipgloss.Height(m.input.View()) - m.helpHeight - 6
-
-	case spinner.TickMsg: // Only update the spinner when needed
+	case spinner.TickMsg:
 		m.progressIndicator, sCmd = m.progressIndicator.Update(msg)
+		m.chatList, lCmd = m.chatList.Update(msg)
+		m.requestsList, rCmd = m.requestsList.Update(msg)
 
-		return m, sCmd
+		return m, tea.Batch(sCmd, lCmd, rCmd)
 	case statusMsg:
-		if msg.sType == STATUS_MESSAGE_LOAD {
+		switch msg.sType {
+		case STATUS_MESSAGE_LOAD:
 			m.messages = []string{}
 			m.loadingMsg = false
 			sItem, _ := m.chatList.SelectedItem().(chatItem)
@@ -308,6 +174,29 @@ func (m chatModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					),
 				),
 			)
+		case STATUS_CHAT_LOAD:
+			var chats []list.Item
+
+			for _, v := range msg.sRes.([]chatItem) {
+				chats = append(chats, v)
+			}
+			m.chatsLoading = false
+			m.chatsLoaded = true
+
+			m.chatList.StopSpinner()
+			m.chatList.SetItems(chats)
+		case STATUS_REQUEST_LOAD:
+			var requests []list.Item
+
+			for _, v := range msg.sRes.([]requestItem) {
+				requests = append(requests, v)
+			}
+
+			m.requestsLoading = false
+			m.requestsLoaded = true
+
+			m.requestsList.StopSpinner()
+			m.requestsList.SetItems(requests)
 		}
 	case tea.KeyMsg:
 		if msg.String() == tea.KeyCtrlC.String() {
@@ -341,15 +230,15 @@ func (m chatModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				case "alt+1":
 					focused = CHATS_PANEL
 				case "alt+2":
-					focused = MESSAGE_PANEL
-				case "alt+3":
-					focused = MESSSAGE_VIEW_PANEL
-				case "alt+4":
 					focused = ACTIVE_REQUEST_PANEL
-				case "alt+5":
+				case "alt+3":
 					focused = SEND_REQUEST_PANNEL
-				case "alt+6":
+				case "alt+4":
 					focused = JOIN_ROOM_PANEL
+				case "alt+5":
+					focused = MESSAGE_PANEL
+				case "alt+6":
+					focused = MESSSAGE_VIEW_PANEL
 				}
 				m.focusedPanel = focused
 			default:
@@ -438,14 +327,11 @@ func (m chatModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 						m.viewport, vCmd = m.viewport.Update(msg)
 						m.focusedPanel = MESSAGE_PANEL
 						m.loadingMsg = true
-						return m, tea.Batch(loadMessages("test", "test"), vCmd)
+						return m, tea.Batch(getMessages("test", "test"), vCmd)
 					}
 				}
 			}
 		}
-	case errMsg:
-		m.err = msg
-		return m, nil
 	}
 	m.viewport, vCmd = m.viewport.Update(msg)
 	m.input, iCmd = m.input.Update(msg)
@@ -455,8 +341,9 @@ func (m chatModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	m.addUserInput, sndReqCmd = m.addUserInput.Update(msg)
 	m.nameChatInput, joinNameCmd = m.nameChatInput.Update(msg)
 	m.passkeyChatInput, joinPassCmd = m.passkeyChatInput.Update(msg)
+	m.requestsList, rCmd = m.requestsList.Update(msg)
 
-	return m, tea.Batch(iCmd, vCmd, lCmd, hCmd, joinPassCmd, joinNameCmd, sndReqCmd, sCmd)
+	return m, tea.Batch(iCmd, vCmd, lCmd, hCmd, joinPassCmd, joinNameCmd, sndReqCmd, sCmd, rCmd)
 }
 
 func (m chatModel) View() string {
@@ -501,7 +388,15 @@ func (m chatModel) View() string {
 			lipgloss.Left,
 			lipgloss.JoinVertical(
 				lipgloss.Top,
-				sendRequestView.Render(fmt.Sprintf("Send a chat request\n%s\n%s", m.addUserInput.View(), sendRequestPlaceholder)),
+				listView.Render(m.chatList.View()),
+				requestView.Render(m.requestsList.View()),
+				sendRequestView.Render(
+					fmt.Sprintf(
+						"Send a chat request\n%s\n%s",
+						m.addUserInput.View(),
+						sendRequestPlaceholder,
+					),
+				),
 				joinRoomView.Render(
 					fmt.Sprintf(
 						"Join a room\n%s\n%s\n%s",
@@ -510,14 +405,12 @@ func (m chatModel) View() string {
 						joinPlaceholder,
 					),
 				),
-				listView.Render(m.chatList.View()),
 			),
 			lipgloss.JoinVertical(
 				lipgloss.Top,
 				chatView.Render(m.viewport.View()),
 				inputView.Render(m.input.View()),
 			),
-			requestView.Render(m.requestsList.View()),
 		),
 		m.help.View(m.keys),
 	)
@@ -525,4 +418,182 @@ func (m chatModel) View() string {
 
 func (m chatModel) Init() tea.Cmd {
 	return nil
+}
+
+func NewChatModel(w, h int) chatModel {
+	var keys = keyMap{
+		Up: key.NewBinding(
+			key.WithKeys("up"),
+			key.WithHelp("↑", "move up  "),
+		),
+		Down: key.NewBinding(
+			key.WithKeys("down"),
+			key.WithHelp("↓", "move down  "),
+		),
+		Tab: key.NewBinding(
+			key.WithKeys("󰌥/󰌒"),
+			key.WithHelp("󰌥/󰌒", "cycle panels  "),
+		),
+		Help: key.NewBinding(
+			key.WithKeys("?"),
+			key.WithHelp("?", "toggle help  "),
+		),
+		Quit: key.NewBinding(
+			key.WithKeys("ctrl+c"),
+			key.WithHelp("ctrl+c", "quit  "),
+		),
+		Enter: key.NewBinding(
+			key.WithKeys("󰌑"),
+			key.WithHelp("󰌑", "enter room/send message  "),
+		),
+		Accept: key.NewBinding(
+			key.WithKeys("ctrl+a"),
+			key.WithHelp("ctrl+a", "accept request  "),
+		),
+		Reject: key.NewBinding(
+			key.WithKeys("ctrl+x"),
+			key.WithHelp("ctrl+x", "reject request  "),
+		),
+		SwitchPanel: key.NewBinding(
+			key.WithKeys("alt+[n]"),
+			key.WithHelp("alt+[n]", "switch panel (1|chats 2|requests 3|send request 4|join room 5|chat input 6|chat view)  "),
+		),
+	}
+
+	sp := spinner.New()
+	sp.Spinner = spinner.Dot
+
+	joinNameInput := textinput.New()
+	joinNameInput.Placeholder = "Chatroom Name"
+	joinNameInput.Blur()
+	joinNameInput.Width = 28
+
+	joinPasskeyInput := textinput.New()
+	joinPasskeyInput.Placeholder = "Chatroom Passkey"
+	joinNameInput.Blur()
+	joinPasskeyInput.Width = 28
+
+	sendRequestInput := textinput.New()
+	sendRequestInput.Placeholder = "Username"
+	sendRequestInput.Blur()
+	sendRequestInput.Width = 28
+
+	sndReqPanelHeight := 5
+	joinRoomPanelHeight := 6
+
+	hp := help.New()
+	hp.Styles = helpStyle
+	hpHeight := strings.Count(hp.View(keys), "\n")
+
+	reqLt := list.New([]list.Item{}, list.NewDefaultDelegate(), 0, 0)
+	reqLt.InfiniteScrolling = true
+	reqLt.Title = "Requests"
+	reqLt.SetShowPagination(false)
+	reqLt.SetShowStatusBar(false)
+	reqLt.SetShowHelp(false)
+	reqLt.SetFilteringEnabled(false)
+	reqLt.SetSize(31, 8)
+	reqLt.KeyMap = list.KeyMap{}
+	reqLt.SetSpinner(spinner.Dot)
+
+	lt := list.New([]list.Item{}, list.NewDefaultDelegate(), 0, 0)
+	lt.InfiniteScrolling = true
+	lt.Title = "Chat List"
+	lt.SetShowPagination(false)
+	lt.SetShowStatusBar(false)
+	lt.SetShowHelp(false)
+	lt.SetFilteringEnabled(false)
+	lt.SetSize(31, h-hpHeight-joinRoomPanelHeight-sndReqPanelHeight-reqLt.Height()-6)
+	lt.KeyMap = list.KeyMap{}
+	lt.SetSpinner(spinner.Dot)
+
+	ta := textarea.New()
+	ta.Placeholder = "Send a message..."
+	ta.Focus()
+	ta.Reset()
+	ta.Prompt = "┃ "
+	ta.SetHeight(1)
+	ta.FocusedStyle.CursorLine = lipgloss.NewStyle()
+	ta.Blur()
+	ta.ShowLineNumbers = false
+	ta.KeyMap.InsertNewline.SetEnabled(false)
+	ta.SetWidth(w - lt.Width() - 4)
+
+	vp := viewport.New(w-lt.Width()-4, h-7-hpHeight)
+
+	return chatModel{
+		input:             ta,
+		viewport:          vp,
+		messages:          []string{},
+		err:               nil,
+		width:             w,
+		height:            h,
+		chatList:          lt,
+		keys:              keys,
+		requestsList:      reqLt,
+		helpHeight:        hpHeight,
+		loadingMsg:        true,
+		nameChatInput:     joinNameInput,
+		passkeyChatInput:  joinPasskeyInput,
+		addUserInput:      sendRequestInput,
+		sndRequestHeight:  sndReqPanelHeight,
+		joinRoomHeight:    joinRoomPanelHeight,
+		progressIndicator: sp,
+	}
+}
+
+func enterChat(w, h int) (chatModel, tea.Cmd) {
+	altScrCmd := tea.EnterAltScreen
+	return NewChatModel(w, h), altScrCmd
+}
+
+func getChats() tea.Cmd {
+	return func() tea.Msg {
+		c := &http.Client{
+			Timeout: 10 * time.Second,
+		}
+		res, err := c.Get("https://google.com")
+		if err != nil {
+			log.Println(err)
+			return errMsg{err}
+		}
+		defer res.Body.Close()
+		return statusMsg{sType: STATUS_CHAT_LOAD, sRes: []chatItem{
+			{name: "User I", lastMessage: "Hello"},
+			{name: "Group I", lastMessage: "Jide: A long ass text to see the width of the list"},
+		}}
+	}
+}
+
+func getRequests() tea.Cmd {
+	return func() tea.Msg {
+		c := &http.Client{
+			Timeout: 10 * time.Second,
+		}
+		res, err := c.Get("https://google.com")
+		if err != nil {
+			log.Println(err)
+			return errMsg{err}
+		}
+		defer res.Body.Close()
+		return statusMsg{sType: STATUS_REQUEST_LOAD, sRes: []requestItem{
+			{name: "Ayobami", sentAt: time.Now()},
+		}}
+	}
+}
+
+func getMessages(chat, username string) tea.Cmd {
+	return func() tea.Msg {
+		c := &http.Client{
+			Timeout: 10 * time.Second,
+		}
+		res, err := c.Get("https://google.com")
+		if err != nil {
+			log.Println(err)
+			return errMsg{err}
+		}
+		defer res.Body.Close()
+		log.Println(chat, username)
+		return statusMsg{sType: STATUS_MESSAGE_LOAD}
+	}
 }

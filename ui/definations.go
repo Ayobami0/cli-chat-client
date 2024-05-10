@@ -2,8 +2,10 @@ package ui
 
 import "time"
 
+type statusType int
+
 type statusMsg struct {
-	sType string
+	sType statusType
 	sRes  interface{}
 	sCode int
 }
