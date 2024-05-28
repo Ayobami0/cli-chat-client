@@ -1,0 +1,27 @@
+syntax = "proto3";
+
+package chat;
+
+import "google/protobuf/timestamp.proto";
+import "user_message.proto";
+
+option go_package = "github.com/Ayobami0/cli-chat-server/pb";
+
+message Message {
+  enum MessageType {
+    MESSAGE_TYPE_UNSPECIFIED = 0;
+    MESSAGE_TYPE_NOTIFICATION = 1;
+    MESSAGE_TYPE_REGULAR = 2;
+  }
+
+  string id = 1;
+  optional User sender = 2;
+  MessageType type = 3;
+  string content = 4;
+  google.protobuf.Timestamp sent_at = 5;
+}
+
+message MessageStream {
+  string chat_id = 1;
+  Message message = 2;
+}

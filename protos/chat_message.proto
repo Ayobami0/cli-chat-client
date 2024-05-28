@@ -1,0 +1,62 @@
+syntax = "proto3";
+
+package chat;
+
+import "google/protobuf/timestamp.proto";
+import "message_message.proto";
+import "user_message.proto";
+
+option go_package = "github.com/Ayobami0/cli-chat-server/pb";
+
+enum ChatType {
+  CHAT_TYPE_UNSPECIFIED = 0;
+  CHAT_TYPE_DIRECT = 1;
+  CHAT_TYPE_GROUP = 2;
+}
+
+message JoinDirectChatRequest {
+  User receiver = 1;
+  google.protobuf.Timestamp sent_at = 2;
+}
+
+message JoinDirectChatResponse {
+  string id = 1;
+  User sender = 2;
+}
+
+message JoinDirectChatResponses {
+  repeated JoinDirectChatResponse requests = 1;
+}
+
+message DirectChatAction {
+  enum Action {
+    ACTION_UNSPECIFIED = 0;
+    ACTION_ACCEPT = 1;
+    ACTION_REJECT = 2;
+  }
+  string id = 1;
+  Action action = 2;
+}
+
+message GroupChatRequest {
+  string group_name = 1;
+  string group_passkey = 2;
+}
+
+message ChatRequest {
+  string id = 1;
+  ChatType chat = 2;
+}
+
+message ChatResponse {
+  string id = 1;
+  repeated Message messages = 2;
+  repeated User members = 3;
+  google.protobuf.Timestamp created_at = 4;
+  ChatType type = 5;
+  optional string name = 6;
+}
+
+message ChatsResponse {
+  repeated ChatResponse chats = 1;
+}

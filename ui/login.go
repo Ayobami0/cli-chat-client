@@ -1,12 +1,12 @@
 package ui
 
 import (
+	"context"
 	"fmt"
 	"log"
-	"net/http"
 	"strings"
-	"time"
 
+	"github.com/Ayobami0/cli-chat/pb"
 	"github.com/charmbracelet/bubbles/spinner"
 	"github.com/charmbracelet/bubbles/textinput"
 	tea "github.com/charmbracelet/bubbletea"
@@ -14,7 +14,6 @@ import (
 
 type loginModel struct {
 	username        string
-	storedPass      string
 	password        textinput.Model
 	isLoading       bool
 	isLoggedIn      bool
@@ -22,6 +21,8 @@ type loginModel struct {
 	width           int
 	height          int
 	validationError bool
+	client          pb.ChatServiceClient
+	authRes         *pb.UserAuthenticatedResponse
 }
 
 func (m loginModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
@@ -38,14 +39,17 @@ func (m loginModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case STATUS_LOGIN:
 			m.isLoading = false
 			m.isLoggedIn = true
+
 		}
 
 		m.spinner, cmd = m.spinner.Update(msg)
+		loginRes := msg.sRes.(*pb.UserAuthenticatedResponse)
+
+		m.authRes = loginRes
 		return m, cmd
 
 	case spinner.TickMsg: // Only update the spinner when needed
 		m.spinner, cmd = m.spinner.Update(msg)
-
 		return m, cmd
 	case tea.KeyMsg:
 		m.password.Placeholder = "Password"
@@ -72,19 +76,19 @@ func (m loginModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				}
 				m.isLoading = true
 				m.password.Blur() // Blur current active input
-				return m, tea.Batch(m.spinner.Tick, cmd, login(map[string]string{"password": password, "username": m.username}))
+				return m, tea.Batch(m.spinner.Tick, cmd, login(
+					map[string]string{"password": password, "username": m.username},
+					m.client,
+				),
+				)
 			} else if m.isLoggedIn {
-				return enterChat(m.width, m.height)
+				return enterChat(m.client, m.width, m.height, m.authRes)
 			}
 		default:
 			if m.isLoggedIn {
-				return enterChat(m.width, m.height)
+				return enterChat(m.client, m.width, m.height, m.authRes)
 			}
 		}
-	}
-	if m.storedPass != "" {
-		m.isLoading = true
-		return m, tea.Batch(m.spinner.Tick, login(map[string]string{"password": m.storedPass, "username": m.username}))
 	}
 	m.password, cmd = m.password.Update(msg)
 	return m, cmd
@@ -93,22 +97,16 @@ func (m loginModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 func (m loginModel) View() string {
 	var b strings.Builder
 
-	if m.storedPass == "" {
-		b.WriteString(m.password.View())
-	}
+	b.WriteString(m.password.View())
 
 	if !m.validationError {
 		if m.isLoading {
-			if m.storedPass == "" {
-				b.WriteRune('\n')
-				b.WriteRune('\n')
-			}
+			b.WriteRune('\n')
+			b.WriteRune('\n')
 			b.WriteString(fmt.Sprintf("Logging into your profile %s\n", m.spinner.View()))
 		} else if !m.isLoading && m.isLoggedIn {
-			if m.storedPass == "" {
-				b.WriteRune('\n')
-				b.WriteRune('\n')
-			}
+			b.WriteRune('\n')
+			b.WriteRune('\n')
 			b.WriteString(successTextStyle.Render(fmt.Sprintf("Logged in %c\n\n", ICON_DONE)))
 			b.WriteString("press any key to proceed\n")
 		}
@@ -119,7 +117,7 @@ func (m loginModel) View() string {
 func (m loginModel) Init() tea.Cmd {
 	return nil
 }
-func NewLoginModel(username, storedPass string) loginModel {
+func NewLoginModel(username string, client pb.ChatServiceClient) loginModel {
 	// Spinner
 	sp := spinner.New()
 	sp.Spinner = spinner.Points
@@ -130,31 +128,31 @@ func NewLoginModel(username, storedPass string) loginModel {
 	passwordInput.EchoMode = textinput.EchoPassword
 	passwordInput.EchoCharacter = '•'
 
-	if storedPass == "" {
-		passwordInput.Focus()
-	}
+	passwordInput.Focus()
 
 	model := loginModel{
-		username:   username,
-		password:   passwordInput,
-		spinner:    sp,
-		storedPass: storedPass,
+		username: username,
+		password: passwordInput,
+		spinner:  sp,
+		client:   client,
 	}
 
 	return model
 }
 
-func login(credential map[string]string) tea.Cmd {
+func login(credential map[string]string, client pb.ChatServiceClient) tea.Cmd {
 	return func() tea.Msg {
-		c := &http.Client{
-			Timeout: 10 * time.Second,
-		}
-		res, err := c.Get("https://google.com")
+		res, err := client.LogIntoAccount(
+			context.Background(),
+			&pb.UserRequest{
+				Username: credential["username"],
+				Password: credential["password"],
+			},
+		)
 		if err != nil {
 			return errMsg{err}
 		}
-		defer res.Body.Close()
-		log.Println(res.Status, credential["password"], credential["username"])
-		return statusMsg{sType: STATUS_LOGIN}
+		log.Println(res.Token, res.User)
+		return statusMsg{sType: STATUS_LOGIN, sRes: res}
 	}
 }

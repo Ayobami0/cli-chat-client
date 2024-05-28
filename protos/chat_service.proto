@@ -1,0 +1,27 @@
+syntax = "proto3";
+
+package chat;
+
+import "auth_message.proto";
+import "chat_message.proto";
+import "google/protobuf/empty.proto";
+import "message_message.proto";
+
+option go_package = "github.com/Ayobami0/cli-chat-server/pb";
+
+service ChatService {
+  rpc CreateNewAccount(UserRequest) returns (UserCreatedResponse);
+  rpc LogIntoAccount(UserRequest) returns (UserAuthenticatedResponse);
+
+  rpc ChatStream(stream MessageStream) returns (stream MessageStream);
+
+  rpc JoinDirectChat(JoinDirectChatRequest) returns (JoinDirectChatResponse);
+  rpc JoinGroupChat(GroupChatRequest) returns (ChatResponse);
+
+  rpc GetDirectChatRequests(google.protobuf.Empty) returns (JoinDirectChatResponses);
+  rpc GetChats(google.protobuf.Empty) returns (ChatsResponse);
+
+  rpc CreateGroupChat(GroupChatRequest) returns (ChatResponse);
+
+  rpc DirectChatRequestAction(DirectChatAction) returns (google.protobuf.Empty);
+}

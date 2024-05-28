@@ -1,12 +1,13 @@
 package ui
 
 import (
+	"context"
 	"fmt"
+	"io"
 	"log"
-	"net/http"
 	"strings"
-	"time"
 
+	"github.com/Ayobami0/cli-chat/pb"
 	"github.com/charmbracelet/bubbles/help"
 	"github.com/charmbracelet/bubbles/key"
 	"github.com/charmbracelet/bubbles/list"
@@ -16,6 +17,9 @@ import (
 	"github.com/charmbracelet/bubbles/viewport"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
+	"google.golang.org/grpc/metadata"
+	"google.golang.org/protobuf/types/known/emptypb"
+	"google.golang.org/protobuf/types/known/timestamppb"
 )
 
 const (
@@ -64,7 +68,6 @@ type chatModel struct {
 	chatList           list.Model
 	requestsList       list.Model
 	messages           []string
-	err                error
 	width              int
 	height             int
 	chats              []string
@@ -81,6 +84,11 @@ type chatModel struct {
 	joinRoomFocusIndex int
 	sendRequestLoading bool
 	joinGroupLoading   bool
+	client             pb.ChatServiceClient
+	sessionToken       string
+	user               *pb.User
+	chatStream         pb.ChatService_ChatStreamClient
+	msgChan            chan *pb.MessageStream
 }
 
 func (m chatModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
@@ -98,11 +106,11 @@ func (m chatModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	if !m.chatsLoading && !m.chatsLoaded {
 		m.chatsLoading = true
-		return m, tea.Batch(m.chatList.StartSpinner(), getChats())
+		return m, tea.Batch(m.chatList.StartSpinner(), m.getChats())
 	}
 	if !m.requestsLoading && !m.requestsLoaded {
 		m.requestsLoading = true
-		return m, tea.Batch(m.requestsList.StartSpinner(), getRequests())
+		return m, tea.Batch(m.requestsList.StartSpinner(), m.getRequests())
 	}
 
 	switch m.focusedPanel {
@@ -159,22 +167,11 @@ func (m chatModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, tea.Batch(sCmd, lCmd, rCmd)
 	case statusMsg:
 		switch msg.sType {
-		case STATUS_MESSAGE_LOAD:
-			m.messages = []string{}
-			m.loadingMsg = false
-			sItem, _ := m.chatList.SelectedItem().(chatItem)
-			m.viewport.SetContent(
-				lipgloss.PlaceHorizontal(
-					lipgloss.Width(
-						m.viewport.View(),
-					),
-					lipgloss.Center,
-					notificationTextStyle.Render(
-						fmt.Sprintf(" You are now chatting in %s ", sItem.name),
-					),
-				),
-			)
-		case STATUS_CHAT_LOAD:
+		case STATUS_REQUEST_ACTION_SEND:
+			m.chatsLoading = false
+			m.chatsLoaded = false
+		case STATUS_GROUP_REQUEST_SEND:
+		case STATUS_CHATS_LOAD:
 			var chats []list.Item
 
 			for _, v := range msg.sRes.([]chatItem) {
@@ -191,15 +188,35 @@ func (m chatModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			for _, v := range msg.sRes.([]requestItem) {
 				requests = append(requests, v)
 			}
-
 			m.requestsLoading = false
 			m.requestsLoaded = true
 
 			m.requestsList.StopSpinner()
 			m.requestsList.SetItems(requests)
+		case STATUS_MESSAGE_RECV:
+			message := msg.sRes.(*pb.MessageStream)
+
+			if message == nil {
+				return m, tea.Batch(vCmd, iCmd, wait(m.msgChan))
+			}
+			m.messages = []string{}
+
+			for _, v := range m.chatList.SelectedItem().(chatItem).messages {
+				m.messages = append(m.messages, m.formatMessage(v))
+			}
+			m.messages = append(m.messages, m.formatMessage(message.Message))
+			vStr := strings.Join(m.messages, "\n")
+			m.viewport.SetContent(vStr)
+			m.viewport.GotoBottom()
+
+			m.viewport, vCmd = m.viewport.Update(msg)
+			m.input, iCmd = m.input.Update(msg)
+
+			return m, tea.Batch(vCmd, iCmd, wait(m.msgChan), m.getChats())
 		}
 	case tea.KeyMsg:
 		if msg.String() == tea.KeyCtrlC.String() {
+			m.chatStream.CloseSend()
 			return m, tea.Quit
 		}
 		if msg.String() == "?" {
@@ -245,13 +262,17 @@ func (m chatModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				switch msg.String() {
 				case "ctrl+a":
 					if m.focusedPanel == ACTIVE_REQUEST_PANEL {
-						//TODO: Add to friend list
+						req := m.requestsList.SelectedItem().(requestItem)
 						m.requestsList.RemoveItem(m.requestsList.Index())
+						m.requestsList, rCmd = m.requestsList.Update(msg)
+						return m, tea.Batch(rCmd, m.sendRequestAction(req.id, pb.DirectChatAction_ACTION_ACCEPT))
 					}
 				case "ctrl+x":
 					if m.focusedPanel == ACTIVE_REQUEST_PANEL {
-						//TODO: Cancel request
+						req := m.requestsList.SelectedItem().(requestItem)
 						m.requestsList.RemoveItem(m.requestsList.Index())
+						m.requestsList, rCmd = m.requestsList.Update(msg)
+						return m, tea.Batch(rCmd, m.sendRequestAction(req.id, pb.DirectChatAction_ACTION_REJECT))
 					}
 				case "up":
 					switch m.focusedPanel {
@@ -299,7 +320,7 @@ func (m chatModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 						if m.joinRoomFocusIndex == 0 {
 							m.joinRoomFocusIndex = 1
 						} else {
-							// TODO: Add joining room function and inserting to chat
+							name, passkey := m.nameChatInput.Value(), m.passkeyChatInput.Value()
 							m.chatList.Select(len(m.chatList.Items()) - 1)
 							m.passkeyChatInput.Reset()
 							m.nameChatInput.Reset()
@@ -309,29 +330,62 @@ func (m chatModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 							m.passkeyChatInput.Blur()
 							m.nameChatInput, joinNameCmd = m.nameChatInput.Update(msg)
 							m.passkeyChatInput, joinPassCmd = m.passkeyChatInput.Update(msg)
-							return m, tea.Batch(joinNameCmd, joinPassCmd, m.progressIndicator.Tick)
+							return m, tea.Batch(joinNameCmd, joinPassCmd, m.progressIndicator.Tick, m.sendGroupChatJoinRequest(name, passkey))
 						}
 					case SEND_REQUEST_PANNEL:
-						// TODO: Add sending request funtionality
+						receiver := m.addUserInput.Value()
 						m.addUserInput.Reset()
 						m.addUserInput, sndReqCmd = m.addUserInput.Update(msg)
 						m.sendRequestLoading = true
-						return m, tea.Batch(sndReqCmd, m.progressIndicator.Tick)
+						return m, tea.Batch(sndReqCmd, m.progressIndicator.Tick, m.sendDirectChatJoinRequest(receiver))
 					case MESSAGE_PANEL:
-						m.messages = append(m.messages, "Me: "+m.input.Value())
-						m.viewport.SetContent(strings.Join(m.messages, "\n"))
-						m.input.Reset()
-						m.viewport.GotoBottom()
+						if m.chatStream != nil {
+
+							chat := m.chatList.SelectedItem().(chatItem)
+
+							m.viewport.SetContent(strings.Join(m.messages, "\n"))
+							msgContent := m.input.Value()
+							m.input.Reset()
+							m.input, iCmd = m.input.Update(msg)
+
+							return m, tea.Batch(iCmd,
+								m.send(&pb.MessageStream{ChatId: chat.id, Message: &pb.Message{
+									Sender:  m.user,
+									Content: msgContent,
+									SentAt:  timestamppb.Now(),
+									Type:    pb.Message_MESSAGE_TYPE_REGULAR,
+								}}))
+						}
 					case CHATS_PANEL:
-						m.viewport.SetContent("Loading...")
+						if m.chatStream != nil {
+							m.chatStream.CloseSend()
+						}
+
+						m.msgChan = make(chan *pb.MessageStream)
+
+						chat := m.chatList.SelectedItem().(chatItem)
+
+						m.viewport.GotoBottom()
 						m.viewport, vCmd = m.viewport.Update(msg)
+						m.input, iCmd = m.input.Update(msg)
 						m.focusedPanel = MESSAGE_PANEL
-						m.loadingMsg = true
-						return m, tea.Batch(getMessages("test", "test"), vCmd)
+
+						err := m.initializeStream(chat.id)
+
+						if err != nil {
+							return m, tea.Quit
+						}
+
+						return m, tea.Batch(vCmd, iCmd, lCmd, m.recv(), wait(m.msgChan))
 					}
 				}
 			}
 		}
+	case errMsg:
+		if msg.err == io.EOF {
+			return m, m.getChats()
+		}
+		return m, tea.Quit
 	}
 	m.viewport, vCmd = m.viewport.Update(msg)
 	m.input, iCmd = m.input.Update(msg)
@@ -417,10 +471,11 @@ func (m chatModel) View() string {
 }
 
 func (m chatModel) Init() tea.Cmd {
+	log.Println(m)
 	return nil
 }
 
-func NewChatModel(w, h int) chatModel {
+func NewChatModel(client pb.ChatServiceClient, w, h int, auth *pb.UserAuthenticatedResponse) chatModel {
 	var keys = keyMap{
 		Up: key.NewBinding(
 			key.WithKeys("up"),
@@ -520,12 +575,19 @@ func NewChatModel(w, h int) chatModel {
 	ta.SetWidth(w - lt.Width() - 4)
 
 	vp := viewport.New(w-lt.Width()-4, h-7-hpHeight)
+	// disable movements
+	vp.KeyMap.Down.SetEnabled(false)
+	vp.KeyMap.Up.SetEnabled(false)
+	vp.KeyMap.PageUp.SetEnabled(false)
+	vp.KeyMap.PageDown.SetEnabled(false)
+	vp.KeyMap.HalfPageUp.SetEnabled(false)
+	vp.KeyMap.HalfPageDown.SetEnabled(false)
 
-	return chatModel{
+	m := chatModel{
+		user:              auth.User,
 		input:             ta,
 		viewport:          vp,
 		messages:          []string{},
-		err:               nil,
 		width:             w,
 		height:            h,
 		chatList:          lt,
@@ -539,61 +601,183 @@ func NewChatModel(w, h int) chatModel {
 		sndRequestHeight:  sndReqPanelHeight,
 		joinRoomHeight:    joinRoomPanelHeight,
 		progressIndicator: sp,
+		sessionToken:      auth.Token,
+		client:            client,
 	}
+
+	return m
 }
 
-func enterChat(w, h int) (chatModel, tea.Cmd) {
+func enterChat(client pb.ChatServiceClient, w, h int, auth *pb.UserAuthenticatedResponse) (chatModel, tea.Cmd) {
 	altScrCmd := tea.EnterAltScreen
-	return NewChatModel(w, h), altScrCmd
+	return NewChatModel(client, w, h, auth), altScrCmd
 }
 
-func getChats() tea.Cmd {
-	return func() tea.Msg {
-		c := &http.Client{
-			Timeout: 10 * time.Second,
+func (m chatModel) formatMessage(msg *pb.Message) string {
+	var fmtMsg string
+	switch msg.Type {
+	case pb.Message_MESSAGE_TYPE_REGULAR:
+		snder := "Me"
+		if msg.Sender.Username != m.user.Username {
+			snder = msg.Sender.Username
 		}
-		res, err := c.Get("https://google.com")
+		fmtMsg = fmt.Sprintf("%s: %s", snder, msg.Content)
+	case pb.Message_MESSAGE_TYPE_NOTIFICATION:
+		fmtMsg = lipgloss.PlaceHorizontal(
+			lipgloss.Width(
+				m.viewport.View(),
+			),
+			lipgloss.Center,
+			notificationTextStyle.Render(
+				msg.Content,
+			),
+		)
+
+	}
+
+	return fmtMsg
+}
+
+func (c chatModel) send(msgStream *pb.MessageStream) tea.Cmd {
+	return func() tea.Msg {
+		err := c.chatStream.Send(msgStream)
+
 		if err != nil {
-			log.Println(err)
 			return errMsg{err}
 		}
-		defer res.Body.Close()
-		return statusMsg{sType: STATUS_CHAT_LOAD, sRes: []chatItem{
-			{name: "User I", lastMessage: "Hello"},
-			{name: "Group I", lastMessage: "Jide: A long ass text to see the width of the list"},
-		}}
+		return statusMsg{sType: STATUS_MESSAGE_SEND}
 	}
 }
 
-func getRequests() tea.Cmd {
+func (c *chatModel) recv() tea.Cmd {
 	return func() tea.Msg {
-		c := &http.Client{
-			Timeout: 10 * time.Second,
+		for {
+			msg, err := c.chatStream.Recv()
+			if err == io.EOF {
+				close(c.msgChan)
+				return errMsg{err}
+			}
+			if err != nil {
+				return errMsg{err}
+			}
+			c.msgChan <- msg
 		}
-		res, err := c.Get("https://google.com")
-		if err != nil {
-			log.Println(err)
-			return errMsg{err}
-		}
-		defer res.Body.Close()
-		return statusMsg{sType: STATUS_REQUEST_LOAD, sRes: []requestItem{
-			{name: "Ayobami", sentAt: time.Now()},
-		}}
+
 	}
 }
 
-func getMessages(chat, username string) tea.Cmd {
+func wait(chat chan *pb.MessageStream) tea.Cmd {
 	return func() tea.Msg {
-		c := &http.Client{
-			Timeout: 10 * time.Second,
-		}
-		res, err := c.Get("https://google.com")
+		return statusMsg{sRes: <-chat, sType: STATUS_MESSAGE_RECV}
+	}
+}
+
+func (c *chatModel) initializeStream(chatID string) error {
+	meta := metadata.Pairs("authorization", fmt.Sprintf("Bearer %s", c.sessionToken), "stream_chat_id", chatID, "stream_username", c.user.Username)
+	ctx := metadata.NewOutgoingContext(context.Background(), meta)
+
+	stream, err := c.client.ChatStream(ctx)
+
+	if err != nil {
+		return err
+	}
+
+	c.chatStream = stream
+
+	return nil
+}
+
+func (c chatModel) sendGroupChatJoinRequest(groupName, groupPasskey string) tea.Cmd {
+	return func() tea.Msg {
+		meta := metadata.Pairs("authorization", fmt.Sprintf("Bearer %s", c.sessionToken))
+
+		ctx := metadata.NewOutgoingContext(context.Background(), meta)
+
+		res, err := c.client.JoinGroupChat(ctx, &pb.GroupChatRequest{GroupName: groupName, GroupPasskey: groupPasskey})
 		if err != nil {
-			log.Println(err)
 			return errMsg{err}
 		}
-		defer res.Body.Close()
-		log.Println(chat, username)
-		return statusMsg{sType: STATUS_MESSAGE_LOAD}
+
+		return statusMsg{sType: STATUS_GROUP_REQUEST_SEND, sRes: res}
+	}
+}
+
+func (c chatModel) getChats() tea.Cmd {
+	return func() tea.Msg {
+		meta := metadata.Pairs("authorization", fmt.Sprintf("Bearer %s", c.sessionToken))
+
+		log.Println(meta)
+		ctx := metadata.NewOutgoingContext(context.Background(), meta)
+
+		res, err := c.client.GetChats(ctx, &emptypb.Empty{})
+		if err != nil {
+			return errMsg{err}
+		}
+
+		var chatItems []chatItem
+		for _, v := range res.Chats {
+			chatItems = append(chatItems, chatItem{
+				id:       v.Id,
+				name:     *v.Name,
+				messages: v.Messages,
+				chatType: v.Type,
+				members:  v.Members,
+			})
+		}
+		return statusMsg{sType: STATUS_CHATS_LOAD, sRes: chatItems}
+	}
+}
+
+func (c chatModel) sendDirectChatJoinRequest(receiver string) tea.Cmd {
+	return func() tea.Msg {
+		meta := metadata.Pairs("authorization", fmt.Sprintf("Bearer %s", c.sessionToken))
+
+		log.Println(meta)
+		ctx := metadata.NewOutgoingContext(context.Background(), meta)
+
+		res, err := c.client.JoinDirectChat(ctx, &pb.JoinDirectChatRequest{SentAt: timestamppb.Now(), Receiver: &pb.User{Username: receiver}})
+		if err != nil {
+			return errMsg{err}
+		}
+
+		return statusMsg{sType: STATUS_DIRECT_REQUEST_SEND, sRes: res}
+	}
+}
+
+func (c chatModel) getRequests() tea.Cmd {
+	return func() tea.Msg {
+		meta := metadata.Pairs("authorization", fmt.Sprintf("Bearer %s", c.sessionToken))
+
+		ctx := metadata.NewOutgoingContext(context.Background(), meta)
+
+		res, err := c.client.GetDirectChatRequests(ctx, &emptypb.Empty{})
+		if err != nil {
+			return errMsg{err}
+		}
+
+		var requestItems []requestItem
+		for _, v := range res.Requests {
+			requestItems = append(requestItems, requestItem{
+				name: *&v.Sender.Username,
+				id:   v.Id,
+			})
+		}
+		return statusMsg{sType: STATUS_REQUEST_LOAD, sRes: requestItems}
+	}
+}
+
+func (c chatModel) sendRequestAction(chatRequestId string, action pb.DirectChatAction_Action) tea.Cmd {
+	return func() tea.Msg {
+		meta := metadata.Pairs("authorization", fmt.Sprintf("Bearer %s", c.sessionToken))
+
+		log.Println(chatRequestId)
+		ctx := metadata.NewOutgoingContext(context.Background(), meta)
+
+		res, err := c.client.DirectChatRequestAction(ctx, &pb.DirectChatAction{Action: action, Id: chatRequestId})
+		if err != nil {
+			return errMsg{err}
+		}
+
+		return statusMsg{sType: STATUS_REQUEST_ACTION_SEND, sRes: res}
 	}
 }

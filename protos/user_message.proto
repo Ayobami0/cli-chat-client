@@ -1,0 +1,10 @@
+syntax = "proto3";
+
+package chat;
+
+option go_package = "github.com/Ayobami0/cli-chat-server/pb";
+
+message User {
+  string username = 1;
+  string id = 2;
+}
