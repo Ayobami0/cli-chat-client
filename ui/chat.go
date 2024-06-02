@@ -30,6 +30,9 @@ const (
 	MESSAGE_PANEL
 	MESSSAGE_VIEW_PANEL
 	MAX_PANEL_NO
+
+	CREATE_GROUP_BTN = 0
+	JOIN_GROUP_BTN   = 1
 )
 
 type keyMap struct {
@@ -58,6 +61,7 @@ func (k keyMap) FullHelp() [][]key.Binding {
 }
 
 type chatModel struct {
+	msg                string
 	chatsLoading       bool
 	requestsLoading    bool
 	chatsLoaded        bool
@@ -72,6 +76,8 @@ type chatModel struct {
 	height             int
 	chats              []string
 	focusedPanel       int
+	groupFocusedBtn    int
+	groupInputDone     bool // Checks if the passkey and name of a group are entered
 	keys               keyMap
 	helpHeight         int
 	sndRequestHeight   int
@@ -119,7 +125,7 @@ func (m chatModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.nameChatInput.Blur()
 		m.passkeyChatInput.Blur()
 	case JOIN_ROOM_PANEL:
-		if !m.joinGroupLoading {
+		if !m.joinGroupLoading && !m.groupInputDone {
 			if m.joinRoomFocusIndex == 0 {
 				m.nameChatInput.Focus()
 				m.passkeyChatInput.Blur()
@@ -154,11 +160,11 @@ func (m chatModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.width, m.height = msg.Width, msg.Height
 
 		m.help.Width = m.width
-		m.input.SetWidth(m.width - m.chatList.Width() - 4) // 4 is to account for the borders
-		m.viewport.Width = m.width - lipgloss.Width(m.chatList.View()) - 4
+		m.input.SetWidth(m.width - m.chatList.Width() - 4)                 // 4 is to account for the borders
+		m.viewport.Width = m.width - lipgloss.Width(m.chatList.View()) - 7 // 7 seems to work without overflowing
 
-		m.chatList.SetHeight(m.height - m.helpHeight - m.joinRoomHeight - m.sndRequestHeight - m.requestsList.Height() - 6)
-		m.viewport.Height = m.height - lipgloss.Height(m.input.View()) - m.helpHeight - 6
+		m.chatList.SetHeight(m.height - m.helpHeight - m.joinRoomHeight - m.sndRequestHeight - m.requestsList.Height() - 7)
+		m.viewport.Height = m.height - lipgloss.Height(m.input.View()) - m.helpHeight - 7
 	case spinner.TickMsg:
 		m.progressIndicator, sCmd = m.progressIndicator.Update(msg)
 		m.chatList, lCmd = m.chatList.Update(msg)
@@ -167,10 +173,22 @@ func (m chatModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, tea.Batch(sCmd, lCmd, rCmd)
 	case statusMsg:
 		switch msg.sType {
+		case STATUS_DIRECT_REQUEST_SEND:
+			m.sendRequestLoading = false
+			m.msg = successTextStyle.Render("Request sent")
+		case STATUS_GROUP_REQUEST_SEND:
+			m.joinGroupLoading = false
+			group := msg.sRes.(*pb.ChatResponse)
+			m.msg = successTextStyle.Render("Joined group chat: " + *group.Name)
+			return m, tea.Batch(vCmd, iCmd, m.wait(), m.getChats())
+		case STATUS_GROUP_CREATE_SEND:
+			m.joinGroupLoading = false
+			group := msg.sRes.(*pb.ChatResponse)
+			m.msg = successTextStyle.Render("Created group chat: " + *group.Name)
+			return m, tea.Batch(vCmd, iCmd, m.wait(), m.getChats())
 		case STATUS_REQUEST_ACTION_SEND:
 			m.chatsLoading = false
 			m.chatsLoaded = false
-		case STATUS_GROUP_REQUEST_SEND:
 		case STATUS_CHATS_LOAD:
 			var chats []list.Item
 
@@ -197,7 +215,7 @@ func (m chatModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			message := msg.sRes.(*pb.MessageStream)
 
 			if message == nil {
-				return m, tea.Batch(vCmd, iCmd, wait(m.msgChan))
+				return m, tea.Batch(vCmd, iCmd, m.wait())
 			}
 			m.messages = []string{}
 
@@ -212,11 +230,13 @@ func (m chatModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.viewport, vCmd = m.viewport.Update(msg)
 			m.input, iCmd = m.input.Update(msg)
 
-			return m, tea.Batch(vCmd, iCmd, wait(m.msgChan), m.getChats())
+			return m, tea.Batch(vCmd, iCmd, m.wait(), m.getChats())
 		}
 	case tea.KeyMsg:
 		if msg.String() == tea.KeyCtrlC.String() {
-			m.chatStream.CloseSend()
+			if m.chatStream != nil {
+				m.chatStream.CloseSend()
+			}
 			return m, tea.Quit
 		}
 		if msg.String() == "?" {
@@ -274,6 +294,26 @@ func (m chatModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 						m.requestsList, rCmd = m.requestsList.Update(msg)
 						return m, tea.Batch(rCmd, m.sendRequestAction(req.id, pb.DirectChatAction_ACTION_REJECT))
 					}
+				case "left":
+					// cycle between button options
+					if m.focusedPanel == JOIN_ROOM_PANEL && m.groupInputDone {
+						if m.groupFocusedBtn == 0 {
+
+							m.groupFocusedBtn = 1
+						} else {
+							m.groupFocusedBtn = 0
+						}
+
+					}
+				case "right":
+					if m.focusedPanel == JOIN_ROOM_PANEL && m.groupInputDone {
+						if m.groupFocusedBtn == 1 {
+
+							m.groupFocusedBtn = 0
+						} else {
+							m.groupFocusedBtn = 1
+						}
+					}
 				case "up":
 					switch m.focusedPanel {
 					case JOIN_ROOM_PANEL:
@@ -317,8 +357,12 @@ func (m chatModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				case "enter":
 					switch m.focusedPanel {
 					case JOIN_ROOM_PANEL:
-						if m.joinRoomFocusIndex == 0 {
-							m.joinRoomFocusIndex = 1
+						if !m.groupInputDone {
+							if m.joinRoomFocusIndex == 0 {
+								m.joinRoomFocusIndex = 1
+							} else {
+								m.groupInputDone = true
+							}
 						} else {
 							name, passkey := m.nameChatInput.Value(), m.passkeyChatInput.Value()
 							m.chatList.Select(len(m.chatList.Items()) - 1)
@@ -328,9 +372,15 @@ func (m chatModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 							m.joinGroupLoading = true
 							m.nameChatInput.Blur()
 							m.passkeyChatInput.Blur()
-							m.nameChatInput, joinNameCmd = m.nameChatInput.Update(msg)
-							m.passkeyChatInput, joinPassCmd = m.passkeyChatInput.Update(msg)
-							return m, tea.Batch(joinNameCmd, joinPassCmd, m.progressIndicator.Tick, m.sendGroupChatJoinRequest(name, passkey))
+
+							switch m.groupFocusedBtn {
+							case CREATE_GROUP_BTN:
+								m.groupInputDone = false
+								return m, tea.Batch(joinNameCmd, joinPassCmd, m.progressIndicator.Tick, m.sendGroupChatCreateRequest(name, passkey))
+							case JOIN_GROUP_BTN:
+								m.groupInputDone = false
+								return m, tea.Batch(joinNameCmd, joinPassCmd, m.progressIndicator.Tick, m.sendGroupChatJoinRequest(name, passkey))
+							}
 						}
 					case SEND_REQUEST_PANNEL:
 						receiver := m.addUserInput.Value()
@@ -376,7 +426,7 @@ func (m chatModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 							return m, tea.Quit
 						}
 
-						return m, tea.Batch(vCmd, iCmd, lCmd, m.recv(), wait(m.msgChan))
+						return m, tea.Batch(vCmd, iCmd, lCmd, m.recv(), m.wait())
 					}
 				}
 			}
@@ -385,7 +435,9 @@ func (m chatModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if msg.err == io.EOF {
 			return m, m.getChats()
 		}
-		return m, tea.Quit
+		m.sendRequestLoading = false
+		m.joinGroupLoading = false
+		m.msg = msg.err.Error()
 	}
 	m.viewport, vCmd = m.viewport.Update(msg)
 	m.input, iCmd = m.input.Update(msg)
@@ -411,6 +463,16 @@ func (m chatModel) View() string {
 	var joinPlaceholder string
 	var sendRequestPlaceholder string
 
+	joinBtn := defaultStyle.Foreground(unfocusedBorderColor)
+	createBtn := defaultStyle.Foreground(unfocusedBorderColor)
+
+	switch m.groupFocusedBtn {
+	case JOIN_GROUP_BTN:
+		joinBtn = defaultStyle.Foreground(focusedBorderColor)
+	case CREATE_GROUP_BTN:
+		createBtn = defaultStyle.Foreground(focusedBorderColor)
+	}
+
 	if m.sendRequestLoading {
 		sendRequestPlaceholder = m.progressIndicator.View()
 	} else {
@@ -419,7 +481,7 @@ func (m chatModel) View() string {
 	if m.joinGroupLoading {
 		joinPlaceholder = m.progressIndicator.View()
 	} else {
-		joinPlaceholder = ""
+		joinPlaceholder = lipgloss.JoinHorizontal(lipgloss.Center, createBtn.Render("[CREATE]"), "    ", joinBtn.Render("[JOIN]"))
 	}
 
 	switch m.focusedPanel {
@@ -466,6 +528,7 @@ func (m chatModel) View() string {
 				inputView.Render(m.input.View()),
 			),
 		),
+		errorTextStyle.Render(m.msg),
 		m.help.View(m.keys),
 	)
 }
@@ -553,12 +616,12 @@ func NewChatModel(client pb.ChatServiceClient, w, h int, auth *pb.UserAuthentica
 
 	lt := list.New([]list.Item{}, list.NewDefaultDelegate(), 0, 0)
 	lt.InfiniteScrolling = true
-	lt.Title = "Chat List"
-	lt.SetShowPagination(false)
+	lt.Title = "Chats"
+	lt.SetShowPagination(true)
 	lt.SetShowStatusBar(false)
 	lt.SetShowHelp(false)
 	lt.SetFilteringEnabled(false)
-	lt.SetSize(31, h-hpHeight-joinRoomPanelHeight-sndReqPanelHeight-reqLt.Height()-6)
+	lt.SetSize(31, h-hpHeight-joinRoomPanelHeight-sndReqPanelHeight-reqLt.Height()-7)
 	lt.KeyMap = list.KeyMap{}
 	lt.SetSpinner(spinner.Dot)
 
@@ -574,7 +637,7 @@ func NewChatModel(client pb.ChatServiceClient, w, h int, auth *pb.UserAuthentica
 	ta.KeyMap.InsertNewline.SetEnabled(false)
 	ta.SetWidth(w - lt.Width() - 4)
 
-	vp := viewport.New(w-lt.Width()-4, h-7-hpHeight)
+	vp := viewport.New(w-lt.Width()-4, h-hpHeight-8)
 	// disable movements
 	vp.KeyMap.Down.SetEnabled(false)
 	vp.KeyMap.Up.SetEnabled(false)
@@ -666,9 +729,9 @@ func (c *chatModel) recv() tea.Cmd {
 	}
 }
 
-func wait(chat chan *pb.MessageStream) tea.Cmd {
+func (c chatModel) wait() tea.Cmd {
 	return func() tea.Msg {
-		return statusMsg{sRes: <-chat, sType: STATUS_MESSAGE_RECV}
+		return statusMsg{sRes: <-c.msgChan, sType: STATUS_MESSAGE_RECV}
 	}
 }
 
@@ -699,6 +762,21 @@ func (c chatModel) sendGroupChatJoinRequest(groupName, groupPasskey string) tea.
 		}
 
 		return statusMsg{sType: STATUS_GROUP_REQUEST_SEND, sRes: res}
+	}
+}
+
+func (c chatModel) sendGroupChatCreateRequest(groupName, groupPasskey string) tea.Cmd {
+	return func() tea.Msg {
+		meta := metadata.Pairs("authorization", fmt.Sprintf("Bearer %s", c.sessionToken))
+
+		ctx := metadata.NewOutgoingContext(context.Background(), meta)
+
+		res, err := c.client.CreateGroupChat(ctx, &pb.GroupChatRequest{GroupName: groupName, GroupPasskey: groupPasskey})
+		if err != nil {
+			return errMsg{err}
+		}
+
+		return statusMsg{sType: STATUS_GROUP_CREATE_SEND, sRes: res}
 	}
 }
 

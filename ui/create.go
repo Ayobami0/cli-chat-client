@@ -33,7 +33,7 @@ func (m createModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.WindowSizeMsg:
 		m.width, m.height = msg.Width, msg.Height
 	case errMsg:
-		fmt.Println(errorTextStyle.Render(fmt.Sprintf("ERROR: %s", msg.Error())))
+		fmt.Println(fmt.Sprintf("ERROR: %s", msg.Error()))
 		return m, tea.Quit
 
 	case statusMsg:
@@ -51,7 +51,6 @@ func (m createModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.authRes = loginRes
 			return m, tea.Batch(cmd)
 		}
-
 	case spinner.TickMsg: // Only update the spinner when needed
 		var cmd tea.Cmd
 		m.spinner, cmd = m.spinner.Update(msg)
@@ -155,20 +154,14 @@ func (m createModel) View() string {
 
 	switch {
 	case m.isCreating:
-		b.WriteRune('\n')
-		b.WriteRune('\n')
-		b.WriteString(fmt.Sprintf("Creating your profile %s\n", m.spinner.View()))
+		b.WriteString(fmt.Sprintf("\n\n%s creating profile\n", m.spinner.View()))
 	case m.isCreated && !m.isLoggedIn:
-		b.WriteRune('\n')
-		b.WriteRune('\n')
-		b.WriteString(successTextStyle.Render(fmt.Sprintf("Profile created %c\n", ICON_DONE)))
-		b.WriteString(fmt.Sprintf("Logging into your profile %s\n", m.spinner.View()))
+		b.WriteString(fmt.Sprintf("\n\n%c profile created\n", ICON_DONE))
+		b.WriteString(fmt.Sprintf("%s logging into your profile\n", m.spinner.View()))
 	case m.isLoggedIn && m.isCreated:
-		b.WriteRune('\n')
-		b.WriteRune('\n')
-		b.WriteString(successTextStyle.Render(fmt.Sprintf("Profile created %c\n", ICON_DONE)))
-		b.WriteString(successTextStyle.Render(fmt.Sprintf("Logged in %c\n\n", ICON_DONE)))
-		b.WriteString("press any key to proceed\n")
+		b.WriteString(fmt.Sprintf("\n\n%c profile created\n", ICON_DONE))
+		b.WriteString(fmt.Sprintf("%c logged in\n\n", ICON_DONE))
+		b.WriteString("Press any key to proceed\n")
 	}
 	return b.String()
 }
@@ -196,7 +189,7 @@ func (m *createModel) setInputsDefaultPlaceholders() {
 func NewCreateModel(client pb.ChatServiceClient) createModel {
 	// Spinner
 	sp := spinner.New()
-	sp.Spinner = spinner.Points
+	sp.Spinner = spinner.Dot
 	// Password Input
 	passwordInput := textinput.New()
 	passwordInput.CharLimit = 16

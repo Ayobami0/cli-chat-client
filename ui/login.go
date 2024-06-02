@@ -31,7 +31,7 @@ func (m loginModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.WindowSizeMsg:
 		m.width, m.height = msg.Width, msg.Height
 	case errMsg:
-		fmt.Println(errorTextStyle.Render(fmt.Sprintf("ERROR: %s", msg.Error())))
+		fmt.Println("ERROR: " + msg.Error())
 		return m, tea.Quit
 	case statusMsg:
 		var cmd tea.Cmd
@@ -101,14 +101,10 @@ func (m loginModel) View() string {
 
 	if !m.validationError {
 		if m.isLoading {
-			b.WriteRune('\n')
-			b.WriteRune('\n')
-			b.WriteString(fmt.Sprintf("Logging into your profile %s\n", m.spinner.View()))
+			b.WriteString(fmt.Sprintf("\n\n%s logging into your profile\n", m.spinner.View()))
 		} else if !m.isLoading && m.isLoggedIn {
-			b.WriteRune('\n')
-			b.WriteRune('\n')
-			b.WriteString(successTextStyle.Render(fmt.Sprintf("Logged in %c\n\n", ICON_DONE)))
-			b.WriteString("press any key to proceed\n")
+			b.WriteString((fmt.Sprintf("\n\n%c logged in\n", ICON_DONE)))
+			b.WriteString("Press any key to proceed\n")
 		}
 	}
 	return b.String()
@@ -120,7 +116,7 @@ func (m loginModel) Init() tea.Cmd {
 func NewLoginModel(username string, client pb.ChatServiceClient) loginModel {
 	// Spinner
 	sp := spinner.New()
-	sp.Spinner = spinner.Points
+	sp.Spinner = spinner.Dot
 	// Password Input
 	passwordInput := textinput.New()
 	passwordInput.CharLimit = 16
