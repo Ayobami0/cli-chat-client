@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"log"
 	"strings"
 
 	"github.com/Ayobami0/cli-chat/pb"
@@ -81,14 +80,12 @@ func (m createModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 								switch key {
 								// Validate inputs
 								case "password":
-									log.Printf("Password")
 									if val == "" {
 										errTxt = "Password cannot be empty"
 									} else if len(val) < 7 {
 										errTxt = "Password must be at least 7 characters"
 									}
 								case "username":
-									log.Printf("Password")
 									if val == "" {
 										errTxt = "Username cannot be empty"
 									}
@@ -229,7 +226,6 @@ func create(credential map[string]string, client pb.ChatServiceClient) tea.Cmd {
 		if err != nil {
 			return errMsg{err}
 		}
-		log.Println(credential["password"], credential["username"])
 		return statusMsg{sType: STATUS_CREATE, sRes: res}
 	}
 }

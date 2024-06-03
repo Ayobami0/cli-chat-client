@@ -3,7 +3,6 @@ package ui
 import (
 	"context"
 	"fmt"
-	"log"
 	"strings"
 
 	"github.com/Ayobami0/cli-chat/pb"
@@ -148,7 +147,6 @@ func login(credential map[string]string, client pb.ChatServiceClient) tea.Cmd {
 		if err != nil {
 			return errMsg{err}
 		}
-		log.Println(res.Token, res.User)
 		return statusMsg{sType: STATUS_LOGIN, sRes: res}
 	}
 }

@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"io"
-	"log"
 	"strings"
 
 	"github.com/Ayobami0/cli-chat/pb"
@@ -534,7 +533,6 @@ func (m chatModel) View() string {
 }
 
 func (m chatModel) Init() tea.Cmd {
-	log.Println(m)
 	return nil
 }
 
@@ -784,7 +782,6 @@ func (c chatModel) getChats() tea.Cmd {
 	return func() tea.Msg {
 		meta := metadata.Pairs("authorization", fmt.Sprintf("Bearer %s", c.sessionToken))
 
-		log.Println(meta)
 		ctx := metadata.NewOutgoingContext(context.Background(), meta)
 
 		res, err := c.client.GetChats(ctx, &emptypb.Empty{})
@@ -810,7 +807,6 @@ func (c chatModel) sendDirectChatJoinRequest(receiver string) tea.Cmd {
 	return func() tea.Msg {
 		meta := metadata.Pairs("authorization", fmt.Sprintf("Bearer %s", c.sessionToken))
 
-		log.Println(meta)
 		ctx := metadata.NewOutgoingContext(context.Background(), meta)
 
 		res, err := c.client.JoinDirectChat(ctx, &pb.JoinDirectChatRequest{SentAt: timestamppb.Now(), Receiver: &pb.User{Username: receiver}})
@@ -848,7 +844,6 @@ func (c chatModel) sendRequestAction(chatRequestId string, action pb.DirectChatA
 	return func() tea.Msg {
 		meta := metadata.Pairs("authorization", fmt.Sprintf("Bearer %s", c.sessionToken))
 
-		log.Println(chatRequestId)
 		ctx := metadata.NewOutgoingContext(context.Background(), meta)
 
 		res, err := c.client.DirectChatRequestAction(ctx, &pb.DirectChatAction{Action: action, Id: chatRequestId})
