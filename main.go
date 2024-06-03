@@ -21,6 +21,10 @@ const (
 	HELP         = "Chat with friends from you terminal.\n\n%s\n\nAvaliable Commands:\n\tcreate: create a new account to chat with\n\tlogin: log into an existing account\n"
 )
 
+// To be set using the -X linker flag
+// i.e. go run -ldflags="-X main.SERVER_ADDR=localhost" main.go
+var SERVER_ADDR = ""
+
 func main() {
 	var username string
 	var help bool
@@ -57,15 +61,16 @@ func main() {
 		}
 		defer f.Close()
 		log.SetOutput(f)
+
+		SERVER_ADDR = "0.0.0.0:5000"
 	}
 
-	addr := os.Getenv("SERVER_ADDR")
-	if addr == "" {
-		fmt.Println("No server address specified")
+	if SERVER_ADDR == "" {
+		fmt.Println("No server address specified. Ensure linker flag is set and rebuild/rerun or run/build with DEBUG set")
 		return
 	}
 
-	conn, err := grpc.NewClient(addr, grpc.WithTransportCredentials(insecure.NewCredentials()))
+	conn, err := grpc.NewClient(SERVER_ADDR, grpc.WithTransportCredentials(insecure.NewCredentials()))
 	if err != nil {
 		fmt.Println(err)
 		return
