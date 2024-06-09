@@ -1,5 +1,8 @@
-# CLI Chat
+# CLIChat
 A command line chat app build with golang and gRPC. Connects to [server](https://github.com/Ayobami0/cli-chat-server)
+
+![CLIChat in action](screenshots/sample-1.png)
+![CLIChat in action](screenshots/sample-2.png)
 
 ## Install
 ### Using the executable (linux only)
